@@ -18,6 +18,10 @@
         <version>1.7.0-SNAPSHOT</version>
     </parent>
 
+    <properties>
+        <nifi.docker.test-repo-port>18081</nifi.docker.test-repo-port>
+    </properties>
+
     <artifactId>dockerhub</artifactId>
 
     <profiles>
@@ -25,6 +29,28 @@
             <id>docker</id>
             <build>
                 <plugins>
+                    <plugin>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <version>1.8</version>
+                        <executions>
+                            <execution>
+                                <id>copy-for-docker</id>
+                                <phase>process-sources</phase>
+                                <configuration>
+                                    <target name="copy assembly to nifi-docker for image build">
+                                        <copy todir="${project.basedir}/target" overwrite="true" flatten="true">
+                                            <fileset dir="${project.basedir}/../../nifi-assembly/target" includes="*.tar.gz">
+                                                <include name="*.tar.gz" />
+                                            </fileset>
+                                        </copy>
+                                    </target>
+                                </configuration>
+                                <goals>
+                                    <goal>run</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
                     <plugin>
                         <groupId>com.spotify</groupId>
                         <artifactId>dockerfile-maven-plugin</artifactId>
@@ -39,7 +65,9 @@
                                     <buildArgs>
                                         <UID>1000</UID>
                                         <GID>1000</GID>
-                                        <NIFI_VERSION>1.6.0</NIFI_VERSION>
+                                        <NIFI_VERSION>${project.version}</NIFI_VERSION>
+                                        <MIRROR_URL>http://host.docker.internal:${nifi.docker.test-repo-port}</MIRROR_URL>
+                                        <ARCHIVE_URL>http://host.docker.internal:${nifi.docker.test-repo-port}</ARCHIVE_URL>
                                     </buildArgs>
                                     <repository>apache/nifi</repository>
                                     <!-- Right now we can only test against the latest released NiFi version to check our Dockerfile -->
@@ -53,6 +81,33 @@
                         <groupId>org.codehaus.mojo</groupId>
                         <executions>
                             <execution>
+                                <id>Docker build local artifact deploy</id>
+                                <phase>prepare-package</phase>
+                                <goals>
+                                    <goal>exec</goal>
+                                </goals>
+                                <configuration>
+                                    <arguments>
+                                        <argument>${project.version}</argument>
+                                        <argument>${nifi.docker.test-repo-port}</argument>
+                                    </arguments>
+                                    <executable>${project.basedir}/docker-build-setup.sh</executable>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>Docker build local artifact deploy teardown</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>exec</goal>
+                                </goals>
+                                <configuration>
+                                    <arguments>
+                                        <argument>${project.version}</argument>
+                                    </arguments>
+                                    <executable>${project.basedir}/docker-build-teardown.sh</executable>
+                                </configuration>
+                            </execution>
+                            <execution>
                                 <id>Docker integration tests</id>
                                 <phase>integration-test</phase>
                                 <goals>
@@ -61,7 +116,7 @@
                                 <configuration>
                                     <arguments>
                                         <argument>${project.version}-dockerhub</argument>
-                                        <argument>1.6.0</argument>
+                                        <argument>${project.version}</argument>
                                     </arguments>
                                     <executable>${project.basedir}/../dockermaven/integration-test.sh</executable>
                                 </configuration>
