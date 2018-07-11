@@ -117,6 +117,7 @@ public class FileAccessPolicyProvider implements ConfigurableAccessPolicyProvide
     static final String PROP_USER_GROUP_PROVIDER = "User Group Provider";
     static final String PROP_AUTHORIZATIONS_FILE = "Authorizations File";
     static final String PROP_INITIAL_ADMIN_IDENTITY = "Initial Admin Identity";
+    static final String PROP_INITIAL_MONITOR_IDENTITY = "Initial Monitor Identity";
     static final Pattern NODE_IDENTITY_PATTERN = Pattern.compile(PROP_NODE_IDENTITY_PREFIX + "\\S+");
 
     private Schema usersSchema;
@@ -126,6 +127,7 @@ public class FileAccessPolicyProvider implements ConfigurableAccessPolicyProvide
     private File restoreAuthorizationsFile;
     private String rootGroupId;
     private String initialAdminIdentity;
+    private String initialMonitorIdentity;
     private String legacyAuthorizedUsersFile;
     private Set<String> nodeIdentities;
     private List<PortDTO> ports = new ArrayList<>();
@@ -206,6 +208,9 @@ public class FileAccessPolicyProvider implements ConfigurableAccessPolicyProvide
             // get the value of the initial admin identity
             final PropertyValue initialAdminIdentityProp = configurationContext.getProperty(PROP_INITIAL_ADMIN_IDENTITY);
             initialAdminIdentity = initialAdminIdentityProp.isSet() ? IdentityMappingUtil.mapIdentity(initialAdminIdentityProp.getValue(), identityMappings) : null;
+
+            final PropertyValue initialMonitorIdentityProp = configurationContext.getProperty(PROP_INITIAL_MONITOR_IDENTITY);
+            initialMonitorIdentity = initialMonitorIdentityProp.isSet() ? IdentityMappingUtil.mapIdentity(initialMonitorIdentityProp.getValue(), identityMappings) : null;
 
             // get the value of the legacy authorized users file
             final PropertyValue legacyAuthorizedUsersProp = configurationContext.getProperty(FileAuthorizer.PROP_LEGACY_AUTHORIZED_USERS_FILE);
@@ -500,6 +505,7 @@ public class FileAccessPolicyProvider implements ConfigurableAccessPolicyProvide
         final AuthorizationsHolder authorizationsHolder = new AuthorizationsHolder(authorizations);
         final boolean emptyAuthorizations = authorizationsHolder.getAllPolicies().isEmpty();
         final boolean hasInitialAdminIdentity = (initialAdminIdentity != null && !StringUtils.isBlank(initialAdminIdentity));
+        final boolean hasInitialMonitorIdentity = (initialMonitorIdentity != null && !StringUtils.isBlank(initialMonitorIdentity));
         final boolean hasLegacyAuthorizedUsers = (legacyAuthorizedUsersFile != null && !StringUtils.isBlank(legacyAuthorizedUsersFile));
 
         // if we are starting fresh then we might need to populate an initial admin or convert legacy users
@@ -515,6 +521,15 @@ public class FileAccessPolicyProvider implements ConfigurableAccessPolicyProvide
                 logger.info("Converting " + legacyAuthorizedUsersFile + " to new authorizations model");
                 convertLegacyAuthorizedUsers(authorizations);
             }
+
+
+            if (hasInitialMonitorIdentity && hasLegacyAuthorizedUsers) {
+                throw new AuthorizerCreationException("Cannot provide an Initial Admin Identity and a Legacy Authorized Users File");
+            } else if (hasInitialMonitorIdentity) {
+                logger.info("Populating authorizations for Initial Monitor:" + initialMonitorIdentity);
+                populateInitialMonitor(authorizations);
+            }
+
 
             populateNodes(authorizations);
 
@@ -596,6 +611,31 @@ public class FileAccessPolicyProvider implements ConfigurableAccessPolicyProvide
         // grant the user read/write access to the /controller resource
         addUserToAccessPolicy(authorizations, ResourceType.Controller.getValue(), initialAdmin.getIdentifier(), READ_CODE);
         addUserToAccessPolicy(authorizations, ResourceType.Controller.getValue(), initialAdmin.getIdentifier(), WRITE_CODE);
+    }
+
+    /**
+     *  Creates the initial monitor user and policies for access the flow.
+     */
+    private void populateInitialMonitor(final Authorizations authorizations) {
+        final User initialMonitor = userGroupProvider.getUserByIdentity(initialMonitorIdentity);
+        if (initialMonitor == null) {
+            throw new AuthorizerCreationException("Unable to locate initial monitor " + initialMonitorIdentity + " to seed policies");
+        }
+
+        // grant the user read access to the /flow resource
+        addUserToAccessPolicy(authorizations, ResourceType.Flow.getValue(), initialMonitor.getIdentifier(), READ_CODE);
+
+        // grant the user read access to the /controller resource
+        addUserToAccessPolicy(authorizations, ResourceType.Controller.getValue(), initialMonitor.getIdentifier(), READ_CODE);
+
+        // grant the user read access to the /system resource
+        addUserToAccessPolicy(authorizations, ResourceType.System.getValue(), initialMonitor.getIdentifier(), READ_CODE);
+
+        // grant the user read access to the root process group resource
+        if (rootGroupId != null) {
+            addUserToAccessPolicy(authorizations, ResourceType.Data.getValue() + ResourceType.ProcessGroup.getValue() + "/" + rootGroupId, initialMonitor.getIdentifier(), READ_CODE);
+            addUserToAccessPolicy(authorizations, ResourceType.ProcessGroup.getValue() + "/" + rootGroupId, initialMonitor.getIdentifier(), READ_CODE);
+        }
     }
 
     /**
